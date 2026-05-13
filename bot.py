@@ -69,6 +69,7 @@ WAITING_NAME = 1
 WAITING_QUEUE_NAME = 2
 WAITING_ADD_USER_ID = 3
 WAITING_ADD_USER_NAME = 4
+WAITING_LINK_NAME = 5
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,46 +127,54 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
-    if not args:
-        profile = await get_user_profile(user.id)
-        if profile:
-            name = html.escape(profile["display_name"])
-            await update.message.reply_text(
-                f"👤 Ты привязан как <b>{name}</b>\n"
-                f"Измени: /link <b>НовоеИмя</b>",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text(
-                "❌ Ты не привязан.\n"
-                "Используй: /link <b>ТвоёИмя</b>\n"
-                "Например: /link Иван",
-                parse_mode="HTML",
-            )
-        return
 
-    name = " ".join(args).strip()
-    if len(name) > 50:
-        await update.message.reply_text("⚠️ Имя слишком длинное (макс. 50 символов).")
-        return
+    if args:
+        name = " ".join(args).strip()
+        if len(name) > 50:
+            await update.message.reply_text("⚠️ Имя слишком длинное (макс. 50 символов).")
+            return ConversationHandler.END
+        await set_user_profile(user.id, user.username or "", name)
+        await update.message.reply_text(
+            f"✅ Ты привязан как <b>{html.escape(name)}</b>!\n\n"
+            "Теперь можешь записаться в любую очередь одной кнопкой.",
+            parse_mode="HTML",
+        )
+        await _notify_admin_link(context, user, name)
+        return ConversationHandler.END
 
-    await set_user_profile(user.id, user.username or "", name)
-    await update.message.reply_text(
-        f"✅ Ты привязан как <b>{html.escape(name)}</b>!\n\n"
-        "Теперь можешь записаться в любую очередь одной кнопкой.",
-        parse_mode="HTML",
-    )
-    if ADMIN_CHAT_ID:
-        try:
-            user_link = f"@{html.escape(user.username)}" if user.username else f"<code>{user.id}</code>"
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"✅ <b>{html.escape(name)}</b> ({user_link}) привязал Telegram.\n"
-                     f"ID: <code>{user.id}</code>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    profile = await get_user_profile(user.id)
+    if profile:
+        name = html.escape(profile["display_name"])
+        await update.message.reply_text(
+            f"👤 Ты уже привязан как <b>{name}</b>\n"
+            f"Хочешь сменить имя? Напиши новое или /cancel.",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            "👋 <b>Привет!</b> Напиши своё имя, чтобы я запомнил тебя.\n\n"
+            "Например: <code>Иван</code>\n\n"
+            "Или отправь /cancel чтобы отменить.",
+            parse_mode="HTML",
+        )
+
+    context.user_data["action"] = "link_name"
+    return WAITING_LINK_NAME
+
+
+async def _notify_admin_link(context, user, name):
+    if not ADMIN_CHAT_ID:
+        return
+    try:
+        user_link = f"@{html.escape(user.username)}" if user.username else f"<code>{user.id}</code>"
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"✅ <b>{html.escape(name)}</b> ({user_link}) привязал Telegram.\n"
+                 f"ID: <code>{user.id}</code>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -767,6 +776,31 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
+    if action == "link_name":
+        name = text.strip()
+        if not name:
+            await update.message.reply_text(
+                "❌ Имя не может быть пустым. Напиши имя или /cancel.",
+                parse_mode="HTML",
+            )
+            return WAITING_LINK_NAME
+        if len(name) > 50:
+            await update.message.reply_text(
+                "⚠️ Имя слишком длинное (макс. 50). Напиши короче или /cancel.",
+                parse_mode="HTML",
+            )
+            return WAITING_LINK_NAME
+        await set_user_profile(user.id, user.username or "", name)
+        await update.message.reply_text(
+            f"✅ Ты привязан как <b>{html.escape(name)}</b>!\n\n"
+            "Теперь можешь записаться в любую очередь одной кнопкой.",
+            parse_mode="HTML",
+            reply_markup=main_menu_keyboard(user.id),
+        )
+        await _notify_admin_link(context, update.effective_user, name)
+        context.user_data.clear()
+        return ConversationHandler.END
+
     if action == "create":
         qid = await create_queue(text, user.id)
         if qid is None:
@@ -838,7 +872,10 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler)],
+        entry_points=[
+            CallbackQueryHandler(button_handler),
+            CommandHandler("link", link_command),
+        ],
         states={
             WAITING_QUEUE_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, text_input)
@@ -849,6 +886,9 @@ def main():
             WAITING_ADD_USER_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, text_input)
             ],
+            WAITING_LINK_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, text_input)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -856,7 +896,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("link", link_command))
     app.add_handler(CommandHandler("users", users_command))
     app.add_handler(CommandHandler("miss", miss_command))
     app.add_handler(conv_handler)
