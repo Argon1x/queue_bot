@@ -54,6 +54,9 @@ def queue_actions_keyboard(queue_id: int, user_id: int):
             InlineKeyboardButton("➕ Добавить участника", callback_data=f"q:adduser:{queue_id}"),
         ])
         keyboard.append([
+            InlineKeyboardButton("⬆️ В начало", callback_data=f"q:movefront:{queue_id}"),
+        ])
+        keyboard.append([
             InlineKeyboardButton("🔄 Очистить", callback_data=f"q:clear:{queue_id}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"q:delete:{queue_id}"),
         ])

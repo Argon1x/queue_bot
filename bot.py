@@ -4,6 +4,7 @@ import asyncio
 import traceback
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -44,6 +45,7 @@ from data import (
     block_user,
     unblock_user,
     get_blocked_users,
+    move_to_front,
 )
 from keyboards import (
     main_menu_keyboard,
@@ -70,6 +72,8 @@ WAITING_ADD_USER_NAME = 4
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if isinstance(context.error, BadRequest) and "Message is not modified" in str(context.error):
+        return
     logging.error("Exception while handling an update:", exc_info=context.error)
     tb = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
     logging.error(f"Traceback: {tb}")
@@ -574,6 +578,31 @@ async def handle_queue_action(query, context, cmd, qid, user_id):
             reply_markup=confirm_keyboard(qid, "delete"),
         )
 
+    elif cmd == "movefront":
+        if not is_admin(user_id):
+            return await query.edit_message_text("⛔ Нет прав.")
+        members = await get_active_members(qid)
+        if not members:
+            await query.edit_message_text(
+                "❗ Очередь пуста.",
+                reply_markup=back_to_queue_keyboard(qid),
+            )
+            return
+        kb = []
+        for m in members:
+            name = html.escape(m["display_name"])
+            kb.append([InlineKeyboardButton(
+                f"⬆️ {name}",
+                callback_data=f"m:movefront:{m['id']}",
+            )])
+        kb.append([InlineKeyboardButton("🔙 Назад", callback_data=f"q:open:{qid}")])
+        await query.edit_message_text(
+            "⬆️ <b>Кого переместить в начало?</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+        return
+
     elif cmd == "adduser":
         if not is_admin(user_id):
             return await query.edit_message_text("⛔ Нет прав.")
@@ -600,7 +629,15 @@ async def handle_member_action(query, context, cmd, mid, user_id):
     q = await get_queue(member["queue_id"])
     name = html.escape(member["display_name"])
 
-    if cmd == "missed":
+    if cmd == "movefront":
+        if not is_admin(user_id):
+            return await query.edit_message_text("⛔ Нет прав.")
+        result = await move_to_front(mid, member["queue_id"], user_id)
+        if not result:
+            text = "⚠️ Не удалось переместить."
+        else:
+            text = f"⬆️ <b>{name}</b> перемещён в начало очереди!\n\n" + await fmt_queue(q)
+    elif cmd == "missed":
         await mark_missed(mid, user_id)
         text = f"🚫 <b>{name}</b> отмечен как не явившийся.\n\n" + await fmt_queue(q)
     elif cmd == "return":

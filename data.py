@@ -13,6 +13,8 @@ async def init_db():
         "created_at TIMESTAMPTZ DEFAULT NOW()"
         ")"
     )
+    await execute("ALTER TABLE queue_members ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0")
+    await execute("UPDATE queue_members SET sort_order = id WHERE sort_order = 0")
     await execute(
         "CREATE TABLE IF NOT EXISTS bot_admins ("
         "telegram_user_id BIGINT PRIMARY KEY,"
@@ -86,13 +88,19 @@ async def join_queue(queue_id: int, user_id: int, username: str, display_name: s
     )
     if existing:
         return "already"
+    max_sort = await fetchrow(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort FROM queue_members WHERE queue_id = $1",
+        queue_id,
+    )
+    next_sort = max_sort["next_sort"] if max_sort else 1
     row = await fetchrow(
-        "INSERT INTO queue_members (queue_id, telegram_user_id, username, display_name, status) "
-        "VALUES ($1, $2, $3, $4, 'active') RETURNING id",
+        "INSERT INTO queue_members (queue_id, telegram_user_id, username, display_name, status, sort_order) "
+        "VALUES ($1, $2, $3, $4, 'active', $5) RETURNING id",
         queue_id,
         user_id,
         username,
         display_name,
+        next_sort,
     )
     pos = await _get_position(queue_id, row["id"])
     await _log_event(queue_id, user_id, "join", None, "active", meta={"member_id": row["id"]})
@@ -210,7 +218,7 @@ async def remove_member(member_id: int, actor: int = 0):
 async def get_active_members(queue_id: int):
     return await fetch(
         "SELECT id, telegram_user_id, username, display_name FROM queue_members "
-        "WHERE queue_id = $1 AND status = 'active' ORDER BY id",
+        "WHERE queue_id = $1 AND status = 'active' ORDER BY sort_order, id",
         queue_id,
     )
 
@@ -345,6 +353,33 @@ async def get_blocked_users():
     return await fetch(
         "SELECT telegram_user_id FROM blocked_users"
     )
+
+
+async def move_to_front(member_id: int, queue_id: int, actor: int = 0):
+    member = await fetchrow(
+        "SELECT id, queue_id, display_name, status FROM queue_members WHERE id = $1 AND queue_id = $2",
+        member_id, queue_id,
+    )
+    if not member or member["status"] != "active":
+        return None
+    current_sort = await fetchrow(
+        "SELECT sort_order FROM queue_members WHERE id = $1", member_id,
+    )
+    if not current_sort:
+        return None
+    current_pos = current_sort["sort_order"]
+    if current_pos == 1:
+        return member
+    await execute(
+        "UPDATE queue_members SET sort_order = sort_order + 1 "
+        "WHERE queue_id = $1 AND status = 'active' AND sort_order < $2",
+        queue_id, current_pos,
+    )
+    await execute(
+        "UPDATE queue_members SET sort_order = 1 WHERE id = $1", member_id,
+    )
+    await _log_event(queue_id, actor, "move_to_front", None, None, meta={"member_id": member_id})
+    return member
 
 
 async def get_queue_stats(queue_id: int):
