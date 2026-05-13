@@ -1,8 +1,32 @@
+import json
+
 from db import fetch, fetchrow, execute
 from config import DEFAULT_QUEUES
 
 
 async def init_db():
+    await execute(
+        "CREATE TABLE IF NOT EXISTS user_profiles ("
+        "telegram_user_id BIGINT PRIMARY KEY,"
+        "display_name TEXT NOT NULL,"
+        "username TEXT DEFAULT '',"
+        "created_at TIMESTAMPTZ DEFAULT NOW()"
+        ")"
+    )
+    await execute(
+        "CREATE TABLE IF NOT EXISTS bot_admins ("
+        "telegram_user_id BIGINT PRIMARY KEY,"
+        "created_by BIGINT NOT NULL DEFAULT 0,"
+        "created_at TIMESTAMPTZ DEFAULT NOW()"
+        ")"
+    )
+    await execute(
+        "CREATE TABLE IF NOT EXISTS blocked_users ("
+        "telegram_user_id BIGINT PRIMARY KEY,"
+        "blocked_by BIGINT NOT NULL DEFAULT 0,"
+        "blocked_at TIMESTAMPTZ DEFAULT NOW()"
+        ")"
+    )
     for title in DEFAULT_QUEUES:
         exists = await fetchrow(
             "SELECT id FROM queues WHERE title = $1 AND is_active = TRUE", title
@@ -73,6 +97,20 @@ async def join_queue(queue_id: int, user_id: int, username: str, display_name: s
     pos = await _get_position(queue_id, row["id"])
     await _log_event(queue_id, user_id, "join", None, "active", meta={"member_id": row["id"]})
     return pos
+
+
+async def join_queue_force(queue_id: int, user_id: int, username: str, display_name: str):
+    existing = await fetchrow(
+        "SELECT id FROM queue_members WHERE queue_id = $1 AND display_name = $2 AND status = 'active'",
+        queue_id, display_name,
+    )
+    if existing:
+        await execute(
+            "UPDATE queue_members SET telegram_user_id = $1, username = $2 WHERE id = $3",
+            user_id, username, existing["id"],
+        )
+        return await _get_position(queue_id, existing["id"])
+    return await join_queue(queue_id, user_id, username, display_name)
 
 
 async def leave_queue(queue_id: int, user_id: int):
@@ -220,7 +258,7 @@ async def _log_event(queue_id, actor, action, old_status, new_status, meta=None)
         action,
         old_status,
         new_status,
-        meta or {},
+        json.dumps(meta or {}),
     )
 
 
@@ -231,6 +269,82 @@ async def admin_clear_queue(queue_id: int, actor: int = 0):
         queue_id,
     )
     await _log_event(queue_id, actor, "clear", "active", "removed")
+
+
+async def get_all_profiles():
+    return await fetch(
+        "SELECT telegram_user_id, display_name, username, created_at "
+        "FROM user_profiles ORDER BY display_name"
+    )
+
+
+async def set_user_profile(user_id: int, username: str, display_name: str):
+    await execute(
+        "INSERT INTO user_profiles (telegram_user_id, username, display_name) "
+        "VALUES ($1, $2, $3) "
+        "ON CONFLICT (telegram_user_id) DO UPDATE SET "
+        "display_name = EXCLUDED.display_name, username = EXCLUDED.username",
+        user_id, username, display_name,
+    )
+    await execute(
+        "UPDATE queue_members SET telegram_user_id = $1 "
+        "WHERE display_name = $2 AND telegram_user_id = 0",
+        user_id, display_name,
+    )
+
+
+async def get_user_profile(user_id: int):
+    return await fetchrow(
+        "SELECT * FROM user_profiles WHERE telegram_user_id = $1", user_id
+    )
+
+
+async def get_next_member(queue_id: int):
+    return await fetchrow(
+        "SELECT id, telegram_user_id, display_name FROM queue_members "
+        "WHERE queue_id = $1 AND status = 'active' ORDER BY id LIMIT 1",
+        queue_id,
+    )
+
+
+async def add_bot_admin(uid: int, created_by: int):
+    await execute(
+        "INSERT INTO bot_admins (telegram_user_id, created_by) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING",
+        uid, created_by,
+    )
+
+
+async def remove_bot_admin(uid: int):
+    await execute(
+        "DELETE FROM bot_admins WHERE telegram_user_id = $1", uid
+    )
+
+
+async def get_bot_admins():
+    return await fetch(
+        "SELECT telegram_user_id FROM bot_admins"
+    )
+
+
+async def block_user(uid: int, blocked_by: int):
+    await execute(
+        "INSERT INTO blocked_users (telegram_user_id, blocked_by) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING",
+        uid, blocked_by,
+    )
+
+
+async def unblock_user(uid: int):
+    await execute(
+        "DELETE FROM blocked_users WHERE telegram_user_id = $1", uid
+    )
+
+
+async def get_blocked_users():
+    return await fetch(
+        "SELECT telegram_user_id FROM blocked_users"
+    )
 
 
 async def get_queue_stats(queue_id: int):

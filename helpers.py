@@ -12,13 +12,13 @@ def _progress_bar(current, total, width=10):
     return "▰" * filled + "▱" * (width - filled)
 
 
-def fmt_queue(queue):
+async def fmt_queue(queue):
     from data import get_active_members, get_queue_stats
 
     queue_id = queue["id"]
     title = esc(queue["title"])
-    members = get_active_members(queue_id)
-    stats = get_queue_stats(queue_id)
+    members = await get_active_members(queue_id)
+    stats = await get_queue_stats(queue_id)
     total_active = len(members)
 
     header = f"<b>📌 {title}</b>"
@@ -56,12 +56,12 @@ def fmt_queue(queue):
     return "\n".join(lines)
 
 
-def fmt_passed(queue):
+async def fmt_passed(queue):
     from data import get_passed_members
 
     queue_id = queue["id"]
     title = esc(queue["title"])
-    passed = get_passed_members(queue_id)
+    passed = await get_passed_members(queue_id)
     count = len(passed)
 
     lines = [f"<b>✅ Прошли: {title}</b>", ""]
@@ -76,9 +76,10 @@ def fmt_passed(queue):
     return "\n".join(lines)
 
 
-def fmt_stats(queue):
+async def fmt_stats(queue):
     from data import get_queue_stats
-    stats = get_queue_stats(queue["id"])
+
+    stats = await get_queue_stats(queue["id"])
     title = esc(queue["title"])
     total = stats["total"]
 
@@ -104,13 +105,13 @@ def fmt_stats(queue):
     return "\n".join(lines)
 
 
-def fmt_my_position(queue, member):
+async def fmt_my_position(queue, member):
     from data import get_active_members
 
     title = esc(queue["title"])
     name = esc(member["display_name"])
 
-    members = get_active_members(queue["id"])
+    members = await get_active_members(queue["id"])
     pos = 0
     for i, m in enumerate(members, start=1):
         if m["id"] == member["id"]:

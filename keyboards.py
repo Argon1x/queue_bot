@@ -3,17 +3,22 @@ from data import get_queues
 from permissions import is_admin
 
 
-def main_menu_keyboard():
+def main_menu_keyboard(user_id: int = 0):
     keyboard = [
         [InlineKeyboardButton("📋 Список очередей", callback_data="show_queues")],
         [InlineKeyboardButton("➕ Создать очередь", callback_data="create_queue")],
         [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
     ]
+    if is_admin(user_id):
+        keyboard.append([InlineKeyboardButton("👥 Участники", callback_data="show_users")])
+    from permissions import is_super_admin
+    if is_super_admin(user_id):
+        keyboard.append([InlineKeyboardButton("⚙️ Управление", callback_data="admin_panel")])
     return InlineKeyboardMarkup(keyboard)
 
 
-def queues_keyboard():
-    queues = get_queues()
+async def queues_keyboard():
+    queues = await get_queues()
     keyboard = []
     for qid, title in queues:
         keyboard.append([
@@ -29,27 +34,28 @@ def queue_actions_keyboard(queue_id: int, user_id: int):
     keyboard = [
         [InlineKeyboardButton("✍️ Записаться", callback_data=f"q:join:{queue_id}")],
         [InlineKeyboardButton("👁 Посмотреть", callback_data=f"q:view:{queue_id}")],
+        [
+            InlineKeyboardButton("➡️ Прошёл", callback_data=f"q:done:{queue_id}"),
+            InlineKeyboardButton("⏰ Не успел", callback_data=f"q:fail:{queue_id}"),
+        ],
+        [
+            InlineKeyboardButton("🚫 Неявка", callback_data=f"q:missed:{queue_id}"),
+            InlineKeyboardButton("📊 Статистика", callback_data=f"q:stats:{queue_id}"),
+        ],
+        [InlineKeyboardButton("✅ Прошедшие", callback_data=f"q:passed:{queue_id}")],
+        [
+            InlineKeyboardButton("👤 Моя позиция", callback_data=f"q:my:{queue_id}"),
+            InlineKeyboardButton("❌ Убрать меня", callback_data=f"q:leave:{queue_id}"),
+        ],
     ]
 
     if is_admin(user_id):
         keyboard.append([
-            InlineKeyboardButton("➡️ Прошёл", callback_data=f"q:done:{queue_id}"),
-            InlineKeyboardButton("⏰ Не успел", callback_data=f"q:fail:{queue_id}"),
+            InlineKeyboardButton("➕ Добавить участника", callback_data=f"q:adduser:{queue_id}"),
         ])
-        keyboard.append([
-            InlineKeyboardButton("🚫 Неявка", callback_data=f"q:missed:{queue_id}"),
-            InlineKeyboardButton("📊 Статистика", callback_data=f"q:stats:{queue_id}"),
-        ])
-        keyboard.append([InlineKeyboardButton("✅ Прошедшие", callback_data=f"q:passed:{queue_id}")])
         keyboard.append([
             InlineKeyboardButton("🔄 Очистить", callback_data=f"q:clear:{queue_id}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"q:delete:{queue_id}"),
-        ])
-    else:
-        keyboard.append([InlineKeyboardButton("✅ Прошедшие", callback_data=f"q:passed:{queue_id}")])
-        keyboard.append([
-            InlineKeyboardButton("👤 Моя позиция", callback_data=f"q:my:{queue_id}"),
-            InlineKeyboardButton("❌ Убрать меня", callback_data=f"q:leave:{queue_id}"),
         ])
 
     keyboard.append([InlineKeyboardButton("🔙 К списку", callback_data="show_queues")])
