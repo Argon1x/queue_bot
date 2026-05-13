@@ -13,8 +13,11 @@ async def init_db():
         "created_at TIMESTAMPTZ DEFAULT NOW()"
         ")"
     )
-    await execute("ALTER TABLE queue_members ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0")
-    await execute("UPDATE queue_members SET sort_order = id WHERE sort_order = 0")
+    try:
+        await execute("ALTER TABLE queue_members ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0")
+        await execute("UPDATE queue_members SET sort_order = id WHERE sort_order = 0")
+    except Exception:
+        pass
     await execute(
         "CREATE TABLE IF NOT EXISTS bot_admins ("
         "telegram_user_id BIGINT PRIMARY KEY,"
